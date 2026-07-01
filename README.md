@@ -5,6 +5,7 @@
 VolumeDeck is a Chrome Extension Manifest V3 prototype plus a Vercel-ready product site. The extension is designed like a premium mini audio mixer for the browser, with per-tab controls, presets, domain rules, mute/solo workflows, and a polished popup UI.
 
 GitHub: https://github.com/evonar543/volumedeck
+Website: https://site-rose-ten-88.vercel.app
 
 ## Features
 

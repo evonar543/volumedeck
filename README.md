@@ -18,7 +18,7 @@ Website: https://site-rose-ten-88.vercel.app
 - Chrome tab muting through `chrome.tabs.update`
 - Real tab gain control through the MV3 `tabCapture` and `offscreen` APIs
 - HTML5 audio/video control through content scripts where the page allows it
-- Mock tab data fallback so the popup can be previewed outside extension mode
+- Real Chrome tab data only, with clear empty states when opened outside extension mode
 - Vercel-ready Next.js website with a CSS-built extension preview
 
 ## Folder Structure
@@ -72,6 +72,8 @@ The site uses Next.js App Router and can be deployed from the `/site` folder on 
 VolumeDeck uses Chrome's `tabCapture` API with an offscreen document to route captured tab audio through a Web Audio `GainNode`. That is the path used for real per-tab gain and boost behavior.
 
 Some pages and browser-owned URLs cannot be captured or scripted. In those cases, native tab muting through Chrome APIs remains the dependable fallback, and content scripts attempt HTML5 audio/video control only when page media elements are available.
+
+The popup only lists real `http` and `https` tabs. Chrome pages, extension pages, the Chrome Web Store, and other browser-owned URLs are intentionally hidden because Chrome will not allow VolumeDeck to capture or script them.
 
 ## Roadmap
 

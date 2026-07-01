@@ -129,11 +129,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             type: "VOLDECK_SET_MEDIA_VOLUME",
             volume: 100
           });
-          return { ok: true, ...result, fallback };
+          return { ok: true, method: "reset", ...result, fallback };
         }
 
         if (result?.captured) {
-          return { ok: true, ...result };
+          return { ok: true, method: "tabCapture", ...result };
         }
 
         const fallback = await sendToTab(message.tabId, {
@@ -143,6 +143,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
         return {
           ok: Boolean(fallback?.found),
+          method: fallback?.found ? "html5" : "none",
           captured: false,
           fallback,
           error: fallback?.found ? result?.error || message.captureError || null : result?.error || message.captureError || fallback?.error
@@ -155,6 +156,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         });
         return {
           ok: Boolean(fallback?.found),
+          method: fallback?.found ? "html5" : "none",
           captured: false,
           fallback,
           error: fallback?.found ? null : error.message

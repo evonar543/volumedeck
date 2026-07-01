@@ -1,15 +1,9 @@
-const mockTabs = [
-  { id: 101, title: "Lo-fi study radio - beats to focus", domain: "youtube.com", audible: true, muted: false, volume: 140, active: true, pinned: true, favIconUrl: "" },
-  { id: 102, title: "Product planning notes", domain: "notion.so", audible: false, muted: false, volume: 100, active: false, pinned: false, favIconUrl: "" },
-  { id: 103, title: "Spotify - Deep Focus", domain: "open.spotify.com", audible: true, muted: false, volume: 80, active: false, pinned: false, favIconUrl: "" },
-  { id: 104, title: "Trailer - Movie Night", domain: "netflix.com", audible: true, muted: true, volume: 320, active: false, pinned: false, favIconUrl: "" }
-];
-
 const state = {
   settings: {},
   presets: [],
   rules: [],
   tabs: [],
+  loadError: "",
   search: "",
   sort: "playing"
 };
@@ -30,6 +24,15 @@ function domainFromUrl(url) {
 
 function initials(domain) {
   return domain.split(".")[0].slice(0, 2).toUpperCase();
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 async function chromeMessage(message) {
@@ -61,23 +64,47 @@ function getTabMediaStreamId(tabId) {
 
 async function loadTabs() {
   const storedTabState = await VolumeDeckStorage.getTabState();
+
+  if (!hasChromeTabs()) {
+    state.tabs = [];
+    state.loadError = "Open VolumeDeck from the Chrome extension popup to control real tabs.";
+    lockStatus(state.loadError);
+    return;
+  }
+
   const tabResponse = await chromeMessage({ type: "VOLDECK_GET_TABS" });
-  const chromeTabs = tabResponse?.ok ? tabResponse.tabs : null;
 
-  const sourceTabs = Array.isArray(chromeTabs) && chromeTabs.length
-    ? chromeTabs.map((tab) => ({
-        ...tab,
-        domain: domainFromUrl(tab.url),
-        volume: storedTabState[tab.id]?.volume || 100,
-        pinned: storedTabState[tab.id]?.pinned || tab.pinned
-      }))
-    : mockTabs.map((tab) => ({ ...tab }));
+  if (!tabResponse?.ok) {
+    state.tabs = [];
+    state.loadError = tabResponse?.error || "Chrome did not return tab data. Reload VolumeDeck from chrome://extensions.";
+    lockStatus(state.loadError);
+    return;
+  }
 
-  state.tabs = sourceTabs;
+  state.loadError = "";
+  unlockStatus();
+  const chromeTabs = Array.isArray(tabResponse.tabs) ? tabResponse.tabs : [];
+  state.tabs = chromeTabs.map((tab) => ({
+    ...tab,
+    title: tab.title || "Untitled tab",
+    domain: domainFromUrl(tab.url),
+    volume: storedTabState[tab.id]?.volume || 100,
+    pinned: storedTabState[tab.id]?.pinned || tab.pinned,
+    audioMethod: storedTabState[tab.id]?.audioMethod || "ready"
+  }));
 }
 
 function reportStatus(message) {
   $("#statusText").textContent = message;
+}
+
+function lockStatus(message) {
+  $("#statusText").dataset.locked = "true";
+  reportStatus(message);
+}
+
+function unlockStatus() {
+  delete $("#statusText").dataset.locked;
 }
 
 function statusFor(tab) {
@@ -85,6 +112,13 @@ function statusFor(tab) {
   if (tab.volume > 100) return "Boosted";
   if (tab.audible) return "Playing";
   return "Silent";
+}
+
+function methodLabel(tab) {
+  if (tab.audioMethod === "tabCapture") return "Method: tab capture boost";
+  if (tab.audioMethod === "html5") return "Method: HTML5 media fallback";
+  if (tab.audioMethod === "mute-only") return "Method: mute-only fallback";
+  return "Method: ready";
 }
 
 function sortedTabs() {
@@ -119,15 +153,15 @@ function renderNowPlaying() {
   $("#nowVolume").textContent = nowTab ? `${nowTab.volume}%` : "0%";
 
   if (!nowTab) {
-    card.innerHTML = '<p class="empty">No audio tabs detected.</p>';
+    card.innerHTML = `<p class="empty">${escapeHtml(state.loadError || "No controllable web tabs detected.")}</p>`;
     return;
   }
 
   card.innerHTML = `
     <div class="favicon"></div>
     <div class="now-copy">
-      <h3>${nowTab.title}</h3>
-      <p>${nowTab.domain}</p>
+      <h3>${escapeHtml(nowTab.title)}</h3>
+      <p>${escapeHtml(nowTab.domain)}</p>
     </div>
     <div class="now-actions">
       <button type="button" data-now-action="mute" title="Mute current tab">${nowTab.muted ? "Unmute" : "Mute"}</button>
@@ -149,7 +183,13 @@ function renderTabs() {
   list.innerHTML = "";
 
   if (!tabs.length) {
-    list.innerHTML = '<p class="empty">No tabs match this search.</p>';
+    if (state.loadError) {
+      list.innerHTML = `<p class="empty">${escapeHtml(state.loadError)}</p>`;
+    } else if (state.tabs.length) {
+      list.innerHTML = '<p class="empty">No tabs match this search.</p>';
+    } else {
+      list.innerHTML = '<p class="empty">No real web tabs available. Open a normal http or https page, play audio, then reopen VolumeDeck.</p>';
+    }
     return;
   }
 
@@ -165,6 +205,7 @@ function renderTabs() {
     node.classList.toggle("muted", tab.muted);
     node.querySelector("h3").textContent = tab.title;
     node.querySelector("p").textContent = tab.domain;
+    node.querySelector(".method-line").textContent = methodLabel(tab);
     renderFavicon(node.querySelector(".favicon"), tab);
     badge.textContent = statusFor(tab);
     badge.className = `badge ${status}`;
@@ -196,16 +237,17 @@ function renderPresets() {
   list.innerHTML = "";
   state.presets.forEach((preset) => {
     const card = document.createElement("article");
+    const presetName = escapeHtml(preset.name);
     card.className = "preset-card";
     card.innerHTML = `
       <div>
-        <strong>${preset.name}</strong>
+        <strong>${presetName}</strong>
         <p>${preset.master}% master / ${Object.keys(preset.rules || {}).length} tuned lanes</p>
       </div>
       <div class="preset-actions">
-        <button type="button" data-action="apply" title="Apply ${preset.name} preset">Apply</button>
-        <button type="button" data-action="rename" title="Rename ${preset.name} preset">Rename</button>
-        <button type="button" data-action="delete" title="Delete ${preset.name} preset">Delete</button>
+        <button type="button" data-action="apply" title="Apply ${presetName} preset">Apply</button>
+        <button type="button" data-action="rename" title="Rename ${presetName} preset">Rename</button>
+        <button type="button" data-action="delete" title="Delete ${presetName} preset">Delete</button>
       </div>
     `;
     card.querySelector('[data-action="apply"]').addEventListener("click", () => applyPreset(preset));
@@ -221,7 +263,7 @@ function renderRules() {
   state.rules.forEach((rule) => {
     const row = document.createElement("label");
     row.className = "rule-row";
-    row.innerHTML = `<p>${rule.label}</p><input type="checkbox" ${rule.enabled ? "checked" : ""} aria-label="Toggle ${rule.label}" />`;
+    row.innerHTML = `<p>${escapeHtml(rule.label)}</p><input type="checkbox" ${rule.enabled ? "checked" : ""} aria-label="Toggle ${escapeHtml(rule.label)}" />`;
     row.querySelector("input").addEventListener("change", async (event) => {
       rule.enabled = event.target.checked;
       await VolumeDeckStorage.saveRules(state.rules);
@@ -233,9 +275,43 @@ function renderRules() {
 async function persistTabState() {
   const tabState = {};
   state.tabs.forEach((tab) => {
-    tabState[tab.id] = { volume: tab.volume, pinned: tab.pinned };
+    tabState[tab.id] = { volume: tab.volume, pinned: tab.pinned, audioMethod: tab.audioMethod };
   });
   await VolumeDeckStorage.saveTabState(tabState);
+}
+
+function describeVolumeResult(tab, volume) {
+  const result = tab.audioControl;
+
+  if (!result) return;
+
+  if (result.method === "tabCapture" || result.captured) {
+    tab.audioMethod = "tabCapture";
+    lockStatus("Tab audio captured. Real boost is active.");
+    return;
+  }
+
+  if (result.method === "reset") {
+    tab.audioMethod = "ready";
+    unlockStatus();
+    return;
+  }
+
+  if (result.method === "html5" || result.fallback?.found) {
+    tab.audioMethod = "html5";
+    const applied = result.fallback?.appliedNativeVolume;
+    if (Number(volume) > 100) {
+      lockStatus(`HTML5 media volume changed to ${applied || 100}%. Boost above 100% needs tab capture.`);
+    } else {
+      lockStatus("HTML5 media volume changed on this page.");
+    }
+    return;
+  }
+
+  if (result.method === "none" || result.error) {
+    tab.audioMethod = "mute-only";
+    lockStatus(`Volume control failed: ${result.error || "this page blocked capture and media control"}. Use mute for this tab.`);
+  }
 }
 
 async function setTabVolume(tabId, volume) {
@@ -256,15 +332,8 @@ async function setTabVolume(tabId, volume) {
 
   tab.audioControl = await chromeMessage({ type: "VOLDECK_SET_VOLUME", tabId, volume, mediaStreamId, captureError });
 
-  if (tab.audioControl?.error) {
-    $("#statusText").dataset.locked = "true";
-    reportStatus(`Volume control failed: ${tab.audioControl.error}`);
-  } else if (tab.audioControl?.fallback?.found) {
-    $("#statusText").dataset.locked = "true";
-    reportStatus("HTML5 media volume changed on this page.");
-  } else {
-    delete $("#statusText").dataset.locked;
-  }
+  describeVolumeResult(tab, volume);
+  await persistTabState();
   render();
 }
 

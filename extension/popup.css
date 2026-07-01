@@ -87,6 +87,10 @@ button:hover {
   gap: 10px;
 }
 
+.brand > div:last-child {
+  min-width: 0;
+}
+
 .logo {
   display: grid;
   width: 32px;
@@ -115,9 +119,17 @@ h1 {
 .brand p,
 .section-heading span,
 .tab-copy p,
+.method-line,
 .rule-list p {
   color: var(--muted);
   font-size: 0.75rem;
+}
+
+.brand p {
+  overflow: hidden;
+  max-width: 220px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .top-actions {
@@ -178,6 +190,16 @@ h1 {
 .tab-copy h3 {
   overflow: hidden;
   font-size: 0.82rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.method-line {
+  display: block;
+  margin-top: 2px;
+  overflow: hidden;
+  color: var(--soft);
+  font-size: 0.66rem;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -406,6 +428,11 @@ h1 {
   padding: 16px;
   color: var(--muted);
   text-align: center;
+}
+
+.now-card .empty {
+  grid-column: 1 / -1;
+  padding: 16px 10px;
 }
 
 body.light {

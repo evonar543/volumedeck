@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>VolumeDeck Settings</title>
+    <link rel="stylesheet" href="options.css" />
+  </head>
+  <body>
+    <main class="settings-shell">
+      <header class="settings-hero">
+        <div>
+          <p class="eyebrow">VolumeDeck settings</p>
+          <h1>Shape the mixer around how you browse.</h1>
+          <p>A clean control room for boost limits, presets, domain rules, visual meters, and extension behavior.</p>
+        </div>
+        <button id="resetAll" type="button" class="danger" title="Reset every VolumeDeck setting">Reset all settings</button>
+      </header>
+
+      <section class="grid">
+        <form id="settingsForm" class="card" aria-labelledby="generalTitle">
+          <h2 id="generalTitle">General</h2>
+          <label>
+            <span>Default boost limit</span>
+            <select id="boostLimit" name="boostLimit">
+              <option value="200">200%</option>
+              <option value="300">300%</option>
+              <option value="450">450%</option>
+              <option value="600">600%</option>
+            </select>
+          </label>
+          <label>
+            <span>New tab default behavior</span>
+            <select id="newTabBehavior" name="newTabBehavior">
+              <option value="remember-domain">Remember domain rules</option>
+              <option value="normal">Start at 100%</option>
+              <option value="muted">Start muted</option>
+            </select>
+          </label>
+          <label>
+            <span>Theme</span>
+            <select id="theme" name="theme">
+              <option value="dark">Dark glass</option>
+              <option value="light">Light desk</option>
+              <option value="system">System</option>
+            </select>
+          </label>
+          <label class="check">
+            <input id="metersEnabled" name="metersEnabled" type="checkbox" />
+            <span>Enable visual audio meters</span>
+          </label>
+          <label class="check">
+            <input id="compactMode" name="compactMode" type="checkbox" />
+            <span>Compact mixer mode</span>
+          </label>
+          <label class="check">
+            <input id="autoMuteNewTabs" name="autoMuteNewTabs" type="checkbox" />
+            <span>Auto-mute new tabs</span>
+          </label>
+          <button type="submit" class="primary">Save settings</button>
+        </form>
+
+        <section class="card" aria-labelledby="rulesTitle">
+          <div class="card-title">
+            <h2 id="rulesTitle">Domain rules</h2>
+            <button id="addRule" type="button" title="Add a new domain rule">Add rule</button>
+          </div>
+          <div id="domainRules" class="rule-editor"></div>
+        </section>
+
+        <section class="card" aria-labelledby="importTitle">
+          <h2 id="importTitle">Preset import/export</h2>
+          <p>Export settings as JSON for backup or import a shared VolumeDeck profile.</p>
+          <textarea id="jsonData" rows="10" spellcheck="false" aria-label="Preset JSON data"></textarea>
+          <div class="button-row">
+            <button id="exportJson" type="button">Export JSON</button>
+            <button id="importJson" type="button">Import JSON</button>
+          </div>
+        </section>
+
+        <section class="card" aria-labelledby="shortcutsTitle">
+          <h2 id="shortcutsTitle">Keyboard shortcuts</h2>
+          <div class="shortcut"><kbd>Alt</kbd><kbd>Shift</kbd><kbd>S</kbd><span>Solo active tab</span></div>
+          <div class="shortcut"><kbd>Alt</kbd><kbd>Shift</kbd><kbd>M</kbd><span>Mute all tabs</span></div>
+          <p>Chrome lets you customize extension shortcuts at <strong>chrome://extensions/shortcuts</strong>.</p>
+        </section>
+      </section>
+      <p id="saveStatus" class="save-status" role="status" aria-live="polite"></p>
+    </main>
+
+    <template id="ruleTemplate">
+      <article class="rule-card">
+        <label>
+          <span>Domain</span>
+          <input data-field="domain" type="text" placeholder="youtube.com" />
+        </label>
+        <label>
+          <span>Action</span>
+          <select data-field="action">
+            <option value="set-volume">Set volume</option>
+            <option value="mute">Mute</option>
+            <option value="mute-new">Mute new tabs</option>
+          </select>
+        </label>
+        <label>
+          <span>Value</span>
+          <input data-field="value" type="number" min="0" max="600" />
+        </label>
+        <label class="check">
+          <input data-field="enabled" type="checkbox" />
+          <span>Enabled</span>
+        </label>
+        <button data-action="delete" type="button" class="danger">Delete</button>
+      </article>
+    </template>
+
+    <script src="storage.js"></script>
+    <script src="options.js"></script>
+  </body>
+</html>

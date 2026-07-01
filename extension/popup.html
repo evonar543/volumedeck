@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>VolumeDeck</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main class="deck" aria-label="VolumeDeck tab audio mixer">
+      <header class="topbar">
+        <div class="brand">
+          <div class="logo" aria-hidden="true">VD</div>
+          <div>
+            <h1>VolumeDeck</h1>
+            <p id="statusText">Loading audio tabs...</p>
+          </div>
+        </div>
+        <div class="top-actions">
+          <button id="themeToggle" class="icon-button" type="button" title="Toggle theme" aria-label="Toggle theme">T</button>
+          <button id="settingsButton" class="icon-button" type="button" title="Open settings" aria-label="Open settings">S</button>
+        </div>
+      </header>
+
+      <section class="now-playing" aria-labelledby="nowPlayingTitle">
+        <div class="section-heading">
+          <span>Now Playing</span>
+          <strong id="nowVolume">100%</strong>
+        </div>
+        <article id="nowPlayingCard" class="now-card"></article>
+      </section>
+
+      <section class="panel master" aria-labelledby="masterTitle">
+        <div class="section-heading">
+          <h2 id="masterTitle">Master Volume</h2>
+          <output id="masterOutput" for="masterVolume">100%</output>
+        </div>
+        <input id="masterVolume" class="slider" type="range" min="0" max="600" value="100" aria-label="Master volume" />
+        <div class="button-grid">
+          <button id="resetMaster" type="button" title="Reset every tab to normal volume">Reset 100%</button>
+          <button id="muteAll" type="button" title="Mute all tabs">Mute all</button>
+          <button id="unmuteAll" type="button" title="Unmute all tabs">Unmute all</button>
+          <button id="normalizeTabs" type="button" title="Set boosted tabs back to a safe range">Normalize</button>
+        </div>
+      </section>
+
+      <section class="toolbar" aria-label="Search and sort tabs">
+        <input id="searchTabs" type="search" placeholder="Search tabs or domains" aria-label="Search tabs" />
+        <select id="sortTabs" aria-label="Sort tabs">
+          <option value="playing">Playing</option>
+          <option value="loudest">Loudest</option>
+          <option value="recent">Recently active</option>
+          <option value="domain">Domain</option>
+          <option value="pinned">Pinned</option>
+        </select>
+      </section>
+
+      <section class="panel" aria-labelledby="mixerTitle">
+        <div class="section-heading">
+          <h2 id="mixerTitle">Tab Mixer</h2>
+          <span id="tabCount">0 tabs</span>
+        </div>
+        <div id="tabList" class="tab-list" aria-live="polite"></div>
+      </section>
+
+      <section class="panel presets" aria-labelledby="presetsTitle">
+        <div class="section-heading">
+          <h2 id="presetsTitle">Presets</h2>
+          <button id="saveCurrentPreset" type="button" title="Save current mixer state">Save Current</button>
+        </div>
+        <div id="presetList" class="preset-list"></div>
+      </section>
+
+      <section class="panel rules" aria-labelledby="rulesTitle">
+        <div class="section-heading">
+          <h2 id="rulesTitle">Quick Rules</h2>
+          <span>Domain automation</span>
+        </div>
+        <div id="ruleList" class="rule-list"></div>
+      </section>
+    </main>
+
+    <template id="tabTemplate">
+      <article class="tab-card">
+        <div class="tab-main">
+          <div class="favicon"></div>
+          <div class="tab-copy">
+            <h3></h3>
+            <p></p>
+          </div>
+          <span class="badge"></span>
+        </div>
+        <div class="meter" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+        <div class="volume-row">
+          <input class="slider tab-slider" type="range" min="0" max="600" value="100" />
+          <output>100%</output>
+        </div>
+        <div class="tab-actions">
+          <button data-action="mute" type="button" title="Mute this tab">Mute</button>
+          <button data-action="solo" type="button" title="Mute every other tab">Solo</button>
+          <button data-action="reset" type="button" title="Reset this tab to 100%">Reset</button>
+          <button data-action="pin" type="button" title="Pin this tab in the mixer">Pin</button>
+        </div>
+      </article>
+    </template>
+
+    <script src="storage.js"></script>
+    <script src="popup.js"></script>
+  </body>
+</html>

@@ -2,22 +2,29 @@ importScripts("storage.js");
 
 const OFFSCREEN_DOCUMENT_PATH = "offscreen.html";
 
+function isWebTab(tab) {
+  return typeof tab.url === "string" && /^https?:\/\//i.test(tab.url);
+}
+
 async function queryTabs() {
   const tabs = await chrome.tabs.query({});
-  return tabs.map((tab) => ({
-    id: tab.id,
-    title: tab.title || "Untitled tab",
-    url: tab.url || "",
-    favIconUrl: tab.favIconUrl || "",
-    audible: Boolean(tab.audible),
-    muted: Boolean(tab.mutedInfo && tab.mutedInfo.muted),
-    active: Boolean(tab.active),
-    pinned: Boolean(tab.pinned)
-  }));
+  return tabs
+    .filter((tab) => tab.id && isWebTab(tab))
+    .map((tab) => ({
+      id: tab.id,
+      title: tab.title || "Untitled tab",
+      url: tab.url || "",
+      favIconUrl: tab.favIconUrl || "",
+      audible: Boolean(tab.audible),
+      muted: Boolean(tab.mutedInfo && tab.mutedInfo.muted),
+      active: Boolean(tab.active),
+      pinned: Boolean(tab.pinned)
+    }));
 }
 
 async function setMuted(tabId, muted) {
-  return chrome.tabs.update(tabId, { muted });
+  await chrome.tabs.update(tabId, { muted });
+  return { ok: true, tabId, muted };
 }
 
 async function sendToTab(tabId, message) {
@@ -62,7 +69,14 @@ async function sendToOffscreen(message) {
 }
 
 async function setCapturedVolume(tabId, volume) {
-  await ensureOffscreenDocument();
+  const nextVolume = Number(volume);
+
+  if (nextVolume === 100) {
+    return sendToOffscreen({
+      type: "VOLDECK_RELEASE_CAPTURE",
+      tabId
+    }).catch(() => ({ captured: false, released: false, volume: 100 }));
+  }
 
   const existing = await sendToOffscreen({
     type: "VOLDECK_GET_CAPTURE_STATE",
@@ -70,14 +84,14 @@ async function setCapturedVolume(tabId, volume) {
   });
 
   let mediaStreamId = null;
-  if (!existing?.captured && volume !== 100) {
+  if (!existing?.captured) {
     mediaStreamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tabId });
   }
 
   return sendToOffscreen({
     type: "VOLDECK_SET_CAPTURE_VOLUME",
     tabId,
-    volume,
+    volume: nextVolume,
     mediaStreamId
   });
 }
@@ -90,12 +104,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || !message.type) return false;
 
   if (message.type === "VOLDECK_GET_TABS") {
-    queryTabs().then(sendResponse);
+    queryTabs()
+      .then((tabs) => sendResponse({ ok: true, tabs }))
+      .catch((error) => sendResponse({ ok: false, error: error.message, tabs: [] }));
     return true;
   }
 
   if (message.type === "VOLDECK_SET_MUTED") {
-    setMuted(message.tabId, message.muted).then(sendResponse);
+    setMuted(message.tabId, message.muted)
+      .then(sendResponse)
+      .catch((error) => sendResponse({ ok: false, error: error.message }));
     return true;
   }
 
@@ -107,6 +125,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           volume: message.volume
         });
         return {
+          ok: false,
           captured: false,
           fallback,
           error: error.message
@@ -123,7 +142,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           tabs.map((tab) => setMuted(tab.id, tab.id !== message.tabId))
         )
       )
-      .then(sendResponse);
+      .then((results) => sendResponse({ ok: true, results }))
+      .catch((error) => sendResponse({ ok: false, error: error.message }));
     return true;
   }
 

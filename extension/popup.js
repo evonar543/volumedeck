@@ -43,7 +43,8 @@ async function chromeMessage(message) {
 
 async function loadTabs() {
   const storedTabState = await VolumeDeckStorage.getTabState();
-  const chromeTabs = await chromeMessage({ type: "VOLDECK_GET_TABS" });
+  const tabResponse = await chromeMessage({ type: "VOLDECK_GET_TABS" });
+  const chromeTabs = tabResponse?.ok ? tabResponse.tabs : null;
 
   const sourceTabs = Array.isArray(chromeTabs) && chromeTabs.length
     ? chromeTabs.map((tab) => ({
@@ -55,6 +56,10 @@ async function loadTabs() {
     : mockTabs.map((tab) => ({ ...tab }));
 
   state.tabs = sourceTabs;
+}
+
+function reportStatus(message) {
+  $("#statusText").textContent = message;
 }
 
 function statusFor(tab) {
@@ -120,7 +125,9 @@ function renderTabs() {
   const list = $("#tabList");
   const tabs = sortedTabs();
   $("#tabCount").textContent = `${tabs.length} tab${tabs.length === 1 ? "" : "s"}`;
-  $("#statusText").textContent = `${state.tabs.filter((tab) => tab.audible && !tab.muted).length} active audio tabs`;
+  if (!$("#statusText").dataset.locked) {
+    $("#statusText").textContent = `${state.tabs.filter((tab) => tab.audible && !tab.muted).length} active audio tabs`;
+  }
   list.innerHTML = "";
 
   if (!tabs.length) {
@@ -219,6 +226,12 @@ async function setTabVolume(tabId, volume) {
   tab.volume = volume;
   await persistTabState();
   tab.audioControl = await chromeMessage({ type: "VOLDECK_SET_VOLUME", tabId, volume });
+  if (tab.audioControl?.error) {
+    $("#statusText").dataset.locked = "true";
+    reportStatus("Chrome blocked deep audio control; saved level locally.");
+  } else {
+    delete $("#statusText").dataset.locked;
+  }
   render();
 }
 
@@ -241,7 +254,8 @@ async function soloTab(tabId) {
   state.tabs.forEach((tab) => {
     tab.muted = tab.id !== tabId;
   });
-  await chromeMessage({ type: "VOLDECK_SOLO_TAB", tabId });
+  const response = await chromeMessage({ type: "VOLDECK_SOLO_TAB", tabId });
+  if (response?.error) reportStatus(`Solo failed: ${response.error}`);
   render();
 }
 

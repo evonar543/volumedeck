@@ -31,7 +31,15 @@ async function sendToTab(tabId, message) {
   try {
     return await chrome.tabs.sendMessage(tabId, message);
   } catch (error) {
-    return { found: 0, error: error.message };
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        files: ["content.js"]
+      });
+      return await chrome.tabs.sendMessage(tabId, message);
+    } catch (injectionError) {
+      return { found: 0, error: injectionError.message || error.message };
+    }
   }
 }
 
@@ -68,7 +76,7 @@ async function sendToOffscreen(message) {
   });
 }
 
-async function setCapturedVolume(tabId, volume) {
+async function setCapturedVolume(tabId, volume, mediaStreamId = null) {
   const nextVolume = Number(volume);
 
   if (nextVolume === 100) {
@@ -83,16 +91,12 @@ async function setCapturedVolume(tabId, volume) {
     tabId
   });
 
-  let mediaStreamId = null;
-  if (!existing?.captured) {
-    mediaStreamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tabId });
-  }
-
   return sendToOffscreen({
     type: "VOLDECK_SET_CAPTURE_VOLUME",
     tabId,
     volume: nextVolume,
-    mediaStreamId
+    mediaStreamId,
+    hasExistingCapture: Boolean(existing?.captured)
   });
 }
 
@@ -118,17 +122,42 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === "VOLDECK_SET_VOLUME") {
-    setCapturedVolume(message.tabId, message.volume)
+    setCapturedVolume(message.tabId, message.volume, message.mediaStreamId)
+      .then(async (result) => {
+        if (Number(message.volume) === 100) {
+          const fallback = await sendToTab(message.tabId, {
+            type: "VOLDECK_SET_MEDIA_VOLUME",
+            volume: 100
+          });
+          return { ok: true, ...result, fallback };
+        }
+
+        if (result?.captured) {
+          return { ok: true, ...result };
+        }
+
+        const fallback = await sendToTab(message.tabId, {
+          type: "VOLDECK_SET_MEDIA_VOLUME",
+          volume: message.volume
+        });
+
+        return {
+          ok: Boolean(fallback?.found),
+          captured: false,
+          fallback,
+          error: fallback?.found ? result?.error || message.captureError || null : result?.error || message.captureError || fallback?.error
+        };
+      })
       .catch(async (error) => {
         const fallback = await sendToTab(message.tabId, {
           type: "VOLDECK_SET_MEDIA_VOLUME",
           volume: message.volume
         });
         return {
-          ok: false,
+          ok: Boolean(fallback?.found),
           captured: false,
           fallback,
-          error: error.message
+          error: fallback?.found ? null : error.message
         };
       })
       .then(sendResponse);

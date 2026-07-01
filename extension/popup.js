@@ -41,6 +41,24 @@ async function chromeMessage(message) {
   }
 }
 
+function getTabMediaStreamId(tabId) {
+  return new Promise((resolve, reject) => {
+    if (typeof chrome === "undefined" || !chrome.tabCapture?.getMediaStreamId) {
+      resolve(null);
+      return;
+    }
+
+    chrome.tabCapture.getMediaStreamId({ targetTabId: tabId }, (mediaStreamId) => {
+      const error = chrome.runtime.lastError;
+      if (error) {
+        reject(new Error(error.message));
+        return;
+      }
+      resolve(mediaStreamId);
+    });
+  });
+}
+
 async function loadTabs() {
   const storedTabState = await VolumeDeckStorage.getTabState();
   const tabResponse = await chromeMessage({ type: "VOLDECK_GET_TABS" });
@@ -224,11 +242,26 @@ async function setTabVolume(tabId, volume) {
   const tab = state.tabs.find((item) => item.id === tabId);
   if (!tab) return;
   tab.volume = volume;
+  tab.audioControl = null;
   await persistTabState();
-  tab.audioControl = await chromeMessage({ type: "VOLDECK_SET_VOLUME", tabId, volume });
+  let mediaStreamId = null;
+  let captureError = null;
+  if (hasChromeTabs() && Number(volume) !== 100) {
+    try {
+      mediaStreamId = await getTabMediaStreamId(tabId);
+    } catch (error) {
+      captureError = error.message;
+    }
+  }
+
+  tab.audioControl = await chromeMessage({ type: "VOLDECK_SET_VOLUME", tabId, volume, mediaStreamId, captureError });
+
   if (tab.audioControl?.error) {
     $("#statusText").dataset.locked = "true";
-    reportStatus("Chrome blocked deep audio control; saved level locally.");
+    reportStatus(`Volume control failed: ${tab.audioControl.error}`);
+  } else if (tab.audioControl?.fallback?.found) {
+    $("#statusText").dataset.locked = "true";
+    reportStatus("HTML5 media volume changed on this page.");
   } else {
     delete $("#statusText").dataset.locked;
   }

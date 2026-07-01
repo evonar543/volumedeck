@@ -44,7 +44,7 @@ async function createCapture(tabId, mediaStreamId) {
   return capture;
 }
 
-async function setCaptureVolume(tabId, volume, mediaStreamId) {
+async function setCaptureVolume(tabId, volume, mediaStreamId, hasExistingCapture = false) {
   const key = numericTabId(tabId);
   const nextVolume = Number(volume);
 
@@ -55,7 +55,13 @@ async function setCaptureVolume(tabId, volume, mediaStreamId) {
 
   let capture = captures.get(key);
   if (!capture) {
-    if (!mediaStreamId) return { captured: false, volume: nextVolume };
+    if (!mediaStreamId) {
+      return {
+        captured: false,
+        volume: nextVolume,
+        error: hasExistingCapture ? "Capture state was lost. Move the slider again." : "Missing tab audio stream permission."
+      };
+    }
     capture = await createCapture(key, mediaStreamId);
   }
 
@@ -85,7 +91,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === "VOLDECK_SET_CAPTURE_VOLUME") {
-    setCaptureVolume(message.tabId, message.volume, message.mediaStreamId)
+    setCaptureVolume(message.tabId, message.volume, message.mediaStreamId, message.hasExistingCapture)
       .then(sendResponse)
       .catch((error) => sendResponse({ captured: false, error: error.message }));
     return true;

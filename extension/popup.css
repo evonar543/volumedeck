@@ -287,7 +287,8 @@ h1 {
 
 .tab-list,
 .preset-list,
-.rule-list {
+.rule-list,
+.check-list {
   display: grid;
   gap: 8px;
 }
@@ -422,6 +423,56 @@ h1 {
 
 .rule-row input {
   accent-color: var(--accent);
+}
+
+.check-list {
+  grid-template-columns: 1fr;
+}
+
+.check-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #08090c;
+}
+
+.check-dot {
+  width: 8px;
+  height: 8px;
+  margin-top: 5px;
+  border-radius: 999px;
+  background: var(--warning);
+}
+
+.check-row.ok .check-dot {
+  background: var(--ok);
+}
+
+.check-row.fail .check-dot {
+  background: var(--danger);
+}
+
+.check-row strong,
+.check-row span {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.check-row strong {
+  font-size: 0.75rem;
+}
+
+.check-row span {
+  color: var(--muted);
+  font-size: 0.68rem;
 }
 
 .empty {

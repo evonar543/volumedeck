@@ -22,9 +22,45 @@ async function queryTabs() {
     }));
 }
 
+async function getTabSnapshot(tabId) {
+  const tab = await chrome.tabs.get(tabId);
+  if (!tab || !isWebTab(tab)) {
+    return { ok: false, error: "Tab is not a controllable web page." };
+  }
+
+  return {
+    ok: true,
+    tab: {
+      id: tab.id,
+      title: tab.title || "Untitled tab",
+      url: tab.url || "",
+      favIconUrl: tab.favIconUrl || "",
+      audible: Boolean(tab.audible),
+      muted: Boolean(tab.mutedInfo && tab.mutedInfo.muted),
+      active: Boolean(tab.active),
+      pinned: Boolean(tab.pinned)
+    }
+  };
+}
+
 async function setMuted(tabId, muted) {
-  await chrome.tabs.update(tabId, { muted });
-  return { ok: true, tabId, muted };
+  const updatedTab = await chrome.tabs.update(tabId, { muted });
+  const verifiedTab = await chrome.tabs.get(tabId);
+  const actualMuted = Boolean(verifiedTab?.mutedInfo?.muted);
+
+  return {
+    ok: actualMuted === Boolean(muted),
+    tabId,
+    requestedMuted: Boolean(muted),
+    muted: actualMuted,
+    verified: actualMuted === Boolean(muted),
+    error: actualMuted === Boolean(muted) ? null : "Chrome did not apply the requested mute state.",
+    tab: {
+      id: verifiedTab?.id || updatedTab?.id || tabId,
+      audible: Boolean(verifiedTab?.audible),
+      muted: actualMuted
+    }
+  };
 }
 
 async function sendToTab(tabId, message) {
@@ -76,6 +112,51 @@ async function sendToOffscreen(message) {
   });
 }
 
+async function runSelfCheck() {
+  const checks = [];
+
+  function add(id, label, ok, detail = "") {
+    checks.push({ id, label, ok: Boolean(ok), detail });
+  }
+
+  try {
+    const tabs = await queryTabs();
+    add("tabs", "Real web tabs", true, `${tabs.length} controllable tab${tabs.length === 1 ? "" : "s"}`);
+  } catch (error) {
+    add("tabs", "Real web tabs", false, error.message);
+  }
+
+  try {
+    await VolumeDeckStorage.ensureDefaults();
+    add("storage", "Local storage", true, "Settings can be read and written.");
+  } catch (error) {
+    add("storage", "Local storage", false, error.message);
+  }
+
+  add("scripting", "Content script injection", Boolean(chrome.scripting?.executeScript), chrome.scripting?.executeScript ? "Available" : "Missing scripting API");
+  add("tabCapture", "Tab capture boost", Boolean(chrome.tabCapture && chrome.offscreen), chrome.tabCapture && chrome.offscreen ? "Available for user-selected tabs." : "Missing tabCapture or offscreen API");
+
+  const tabs = await queryTabs().catch(() => []);
+  const activeTab = tabs.find((tab) => tab.active) || tabs[0];
+  if (!activeTab) {
+    add("media", "HTML5 media fallback", true, "Open a web tab to scan page media.");
+  } else {
+    const scan = await sendToTab(activeTab.id, { type: "VOLDECK_SCAN_MEDIA" });
+    add(
+      "media",
+      "HTML5 media fallback",
+      !scan?.error,
+      scan?.error ? scan.error : `${scan?.found || 0} media element${scan?.found === 1 ? "" : "s"} on active tab`
+    );
+  }
+
+  return {
+    ok: checks.every((check) => check.ok),
+    checks,
+    checkedAt: new Date().toISOString()
+  };
+}
+
 async function setCapturedVolume(tabId, volume, mediaStreamId = null) {
   const nextVolume = Number(volume);
 
@@ -114,10 +195,28 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message.type === "VOLDECK_GET_TAB") {
+    getTabSnapshot(message.tabId)
+      .then(sendResponse)
+      .catch((error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
   if (message.type === "VOLDECK_SET_MUTED") {
     setMuted(message.tabId, message.muted)
       .then(sendResponse)
       .catch((error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
+  if (message.type === "VOLDECK_SELF_CHECK") {
+    runSelfCheck()
+      .then(sendResponse)
+      .catch((error) => sendResponse({
+        ok: false,
+        checkedAt: new Date().toISOString(),
+        checks: [{ id: "self-check", label: "Self check runner", ok: false, detail: error.message }]
+      }));
     return true;
   }
 

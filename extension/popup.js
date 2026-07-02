@@ -3,9 +3,11 @@ const state = {
   presets: [],
   rules: [],
   tabs: [],
+  checks: [],
   loadError: "",
   search: "",
-  sort: "playing"
+  sort: "playing",
+  refreshing: false
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -62,7 +64,8 @@ function getTabMediaStreamId(tabId) {
   });
 }
 
-async function loadTabs() {
+async function loadTabs(options = {}) {
+  const { preserveStatus = false } = options;
   const storedTabState = await VolumeDeckStorage.getTabState();
 
   if (!hasChromeTabs()) {
@@ -82,15 +85,17 @@ async function loadTabs() {
   }
 
   state.loadError = "";
-  unlockStatus();
+  if (!preserveStatus) unlockStatus();
   const chromeTabs = Array.isArray(tabResponse.tabs) ? tabResponse.tabs : [];
+  const currentTabs = new Map(state.tabs.map((tab) => [tab.id, tab]));
   state.tabs = chromeTabs.map((tab) => ({
     ...tab,
     title: tab.title || "Untitled tab",
     domain: domainFromUrl(tab.url),
-    volume: storedTabState[tab.id]?.volume || 100,
-    pinned: storedTabState[tab.id]?.pinned || tab.pinned,
-    audioMethod: storedTabState[tab.id]?.audioMethod || "ready"
+    volume: currentTabs.get(tab.id)?.volume ?? storedTabState[tab.id]?.volume ?? 100,
+    pinned: storedTabState[tab.id]?.pinned ?? tab.pinned,
+    audioMethod: currentTabs.get(tab.id)?.audioMethod ?? storedTabState[tab.id]?.audioMethod ?? "ready",
+    audioControl: currentTabs.get(tab.id)?.audioControl || null
   }));
 }
 
@@ -272,6 +277,30 @@ function renderRules() {
   });
 }
 
+function renderChecks() {
+  const list = $("#checkList");
+  if (!list) return;
+  list.innerHTML = "";
+
+  if (!state.checks.length) {
+    list.innerHTML = '<p class="empty">Checks have not run yet.</p>';
+    return;
+  }
+
+  state.checks.forEach((check) => {
+    const row = document.createElement("div");
+    row.className = `check-row ${check.ok ? "ok" : "fail"}`;
+    row.innerHTML = `
+      <span class="check-dot" aria-hidden="true"></span>
+      <div>
+        <strong>${escapeHtml(check.label)}</strong>
+        <span>${escapeHtml(check.detail || (check.ok ? "OK" : "Needs attention"))}</span>
+      </div>
+    `;
+    list.append(row);
+  });
+}
+
 async function persistTabState() {
   const tabState = {};
   state.tabs.forEach((tab) => {
@@ -340,16 +369,29 @@ async function setTabVolume(tabId, volume) {
 async function toggleMute(tabId) {
   const tab = state.tabs.find((item) => item.id === tabId);
   if (!tab) return;
-  tab.muted = !tab.muted;
-  await chromeMessage({ type: "VOLDECK_SET_MUTED", tabId, muted: tab.muted });
+  const requestedMuted = !tab.muted;
+  tab.muted = requestedMuted;
+  renderTabs();
+  const response = await chromeMessage({ type: "VOLDECK_SET_MUTED", tabId, muted: requestedMuted });
+
+  if (!response?.ok || !response.verified) {
+    tab.muted = Boolean(response?.muted);
+    lockStatus(`Mute check failed: ${response?.error || "Chrome did not verify the mute change."}`);
+  } else {
+    tab.muted = response.muted;
+    lockStatus(`${response.muted ? "Mute" : "Unmute"} verified by Chrome.`);
+  }
+
+  await refreshSingleTab(tabId);
   render();
 }
 
 async function setTabMuted(tabId, muted) {
   const tab = state.tabs.find((item) => item.id === tabId);
   if (!tab) return;
-  tab.muted = muted;
-  await chromeMessage({ type: "VOLDECK_SET_MUTED", tabId, muted });
+  const response = await chromeMessage({ type: "VOLDECK_SET_MUTED", tabId, muted });
+  tab.muted = Boolean(response?.muted ?? muted);
+  return response;
 }
 
 async function soloTab(tabId) {
@@ -357,7 +399,15 @@ async function soloTab(tabId) {
     tab.muted = tab.id !== tabId;
   });
   const response = await chromeMessage({ type: "VOLDECK_SOLO_TAB", tabId });
-  if (response?.error) reportStatus(`Solo failed: ${response.error}`);
+  const failed = response?.results?.filter((result) => !result.ok || !result.verified) || [];
+  if (response?.error) {
+    lockStatus(`Solo failed: ${response.error}`);
+  } else if (failed.length) {
+    lockStatus(`Solo check failed on ${failed.length} tab${failed.length === 1 ? "" : "s"}.`);
+  } else {
+    lockStatus("Solo verified by Chrome.");
+  }
+  await refreshLiveTabs();
   render();
 }
 
@@ -413,9 +463,70 @@ function render() {
   $("#masterOutput").textContent = `${$("#masterVolume").value}%`;
   renderNowPlaying();
   renderTabs();
+  renderChecks();
   renderPresets();
   renderRules();
   document.body.classList.toggle("light", state.settings.theme === "light");
+}
+
+async function refreshSingleTab(tabId) {
+  const response = await chromeMessage({ type: "VOLDECK_GET_TAB", tabId });
+  if (!response?.ok || !response.tab) return;
+  const tab = state.tabs.find((item) => item.id === tabId);
+  if (!tab) return;
+  Object.assign(tab, {
+    ...response.tab,
+    domain: domainFromUrl(response.tab.url),
+    volume: tab.volume,
+    pinned: tab.pinned,
+    audioMethod: tab.audioMethod,
+    audioControl: tab.audioControl
+  });
+}
+
+async function refreshLiveTabs() {
+  if (state.refreshing) return;
+  state.refreshing = true;
+  try {
+    await loadTabs({ preserveStatus: true });
+    renderNowPlaying();
+    renderTabs();
+  } finally {
+    state.refreshing = false;
+  }
+}
+
+function startLiveRefresh() {
+  if (!hasChromeTabs()) return;
+  setInterval(refreshLiveTabs, 2000);
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) refreshLiveTabs();
+  });
+
+  const refresh = () => refreshLiveTabs();
+  chrome.tabs.onActivated?.addListener(refresh);
+  chrome.tabs.onCreated?.addListener(refresh);
+  chrome.tabs.onRemoved?.addListener(refresh);
+  chrome.tabs.onUpdated?.addListener(refresh);
+}
+
+async function runSelfCheck() {
+  state.checks = [{ id: "running", label: "Running checks", ok: true, detail: "Checking Chrome APIs and active tab media..." }];
+  renderChecks();
+
+  const response = await chromeMessage({ type: "VOLDECK_SELF_CHECK" });
+  state.checks = Array.isArray(response?.checks)
+    ? response.checks
+    : [{ id: "self-check", label: "Self check runner", ok: false, detail: "Chrome did not return check results." }];
+
+  if (response?.ok) {
+    lockStatus("Self check passed.");
+  } else {
+    const failed = state.checks.filter((check) => !check.ok).length;
+    lockStatus(`Self check found ${failed || 1} issue${failed === 1 ? "" : "s"}.`);
+  }
+
+  render();
 }
 
 async function init() {
@@ -445,11 +556,17 @@ async function init() {
     ]).then(render);
   });
   $("#muteAll").addEventListener("click", async () => {
-    await Promise.all(state.tabs.map((tab) => setTabMuted(tab.id, true)));
+    const results = await Promise.all(state.tabs.map((tab) => setTabMuted(tab.id, true)));
+    const failed = results.filter((result) => !result?.ok || !result?.verified).length;
+    lockStatus(failed ? `Mute-all check failed on ${failed} tab${failed === 1 ? "" : "s"}.` : "Mute all verified by Chrome.");
+    await refreshLiveTabs();
     render();
   });
   $("#unmuteAll").addEventListener("click", async () => {
-    await Promise.all(state.tabs.map((tab) => setTabMuted(tab.id, false)));
+    const results = await Promise.all(state.tabs.map((tab) => setTabMuted(tab.id, false)));
+    const failed = results.filter((result) => !result?.ok || !result?.verified).length;
+    lockStatus(failed ? `Unmute-all check failed on ${failed} tab${failed === 1 ? "" : "s"}.` : "Unmute all verified by Chrome.");
+    await refreshLiveTabs();
     render();
   });
   $("#normalizeTabs").addEventListener("click", () => {
@@ -475,8 +592,11 @@ async function init() {
     state.sort = event.target.value;
     renderTabs();
   });
+  $("#runSelfCheck").addEventListener("click", runSelfCheck);
 
   render();
+  startLiveRefresh();
+  runSelfCheck();
 }
 
 init();

@@ -19,6 +19,9 @@ Website: https://site-rose-ten-88.vercel.app
 - Real tab gain control through the MV3 `tabCapture` and `offscreen` APIs
 - HTML5 audio/video control through content scripts where the page allows it
 - Real Chrome tab data only, with clear empty states when opened outside extension mode
+- Live popup refresh from Chrome tab events, with a short polling fallback
+- Built-in self checks for storage, tab access, script injection, tab capture, and page media access
+- Verified mute/unmute actions that read Chrome tab state back after updates
 - Vercel-ready Next.js website with a CSS-built extension preview
 
 ## Folder Structure

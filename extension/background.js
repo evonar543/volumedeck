@@ -6,6 +6,10 @@ function isWebTab(tab) {
   return typeof tab.url === "string" && /^https?:\/\//i.test(tab.url);
 }
 
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function queryTabs() {
   const tabs = await chrome.tabs.query({});
   return tabs
@@ -44,17 +48,24 @@ async function getTabSnapshot(tabId) {
 }
 
 async function setMuted(tabId, muted) {
-  const updatedTab = await chrome.tabs.update(tabId, { muted });
-  const verifiedTab = await chrome.tabs.get(tabId);
-  const actualMuted = Boolean(verifiedTab?.mutedInfo?.muted);
+  const requestedMuted = Boolean(muted);
+  const updatedTab = await chrome.tabs.update(tabId, { muted: requestedMuted });
+  let verifiedTab = await chrome.tabs.get(tabId);
+  let actualMuted = Boolean(verifiedTab?.mutedInfo?.muted);
+
+  if (actualMuted !== requestedMuted) {
+    await delay(120);
+    verifiedTab = await chrome.tabs.get(tabId);
+    actualMuted = Boolean(verifiedTab?.mutedInfo?.muted);
+  }
 
   return {
-    ok: actualMuted === Boolean(muted),
+    ok: actualMuted === requestedMuted,
     tabId,
-    requestedMuted: Boolean(muted),
+    requestedMuted,
     muted: actualMuted,
-    verified: actualMuted === Boolean(muted),
-    error: actualMuted === Boolean(muted) ? null : "Chrome did not apply the requested mute state.",
+    verified: actualMuted === requestedMuted,
+    error: actualMuted === requestedMuted ? null : "Chrome did not apply the requested mute state.",
     tab: {
       id: verifiedTab?.id || updatedTab?.id || tabId,
       audible: Boolean(verifiedTab?.audible),
@@ -181,6 +192,24 @@ async function setCapturedVolume(tabId, volume, mediaStreamId = null) {
   });
 }
 
+async function verifyTabControl(tabId) {
+  const snapshot = await getTabSnapshot(tabId);
+  if (!snapshot.ok) return snapshot;
+
+  const [capture, media] = await Promise.all([
+    sendToOffscreen({ type: "VOLDECK_GET_CAPTURE_STATE", tabId }).catch((error) => ({ captured: false, verified: false, error: error.message })),
+    sendToTab(tabId, { type: "VOLDECK_SCAN_MEDIA" }).catch((error) => ({ found: 0, verified: false, error: error.message }))
+  ]);
+
+  return {
+    ok: true,
+    tab: snapshot.tab,
+    capture,
+    media,
+    verified: Boolean(capture?.verified !== false && !media?.error)
+  };
+}
+
 chrome.runtime.onInstalled.addListener(() => {
   VolumeDeckStorage.ensureDefaults();
 });
@@ -199,6 +228,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     getTabSnapshot(message.tabId)
       .then(sendResponse)
       .catch((error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
+  if (message.type === "VOLDECK_VERIFY_TAB_CONTROL") {
+    verifyTabControl(message.tabId)
+      .then(sendResponse)
+      .catch((error) => sendResponse({ ok: false, verified: false, error: error.message }));
     return true;
   }
 
@@ -228,11 +264,29 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             type: "VOLDECK_SET_MEDIA_VOLUME",
             volume: 100
           });
-          return { ok: true, method: "reset", ...result, fallback };
+          return {
+            ok: true,
+            method: "reset",
+            verified: result?.verified !== false && fallback?.verified !== false,
+            ...result,
+            fallback
+          };
         }
 
         if (result?.captured) {
-          return { ok: true, method: "tabCapture", ...result };
+          const verifiedCapture = await sendToOffscreen({
+            type: "VOLDECK_GET_CAPTURE_STATE",
+            tabId: message.tabId
+          }).catch((error) => ({ verified: false, error: error.message }));
+
+          return {
+            ...result,
+            ok: Boolean(result.verified && verifiedCapture?.verified),
+            method: "tabCapture",
+            verified: Boolean(result.verified && verifiedCapture?.verified),
+            verify: verifiedCapture,
+            error: result.verified && verifiedCapture?.verified ? null : verifiedCapture?.error || result.error || "Tab capture gain was not verified."
+          };
         }
 
         const fallback = await sendToTab(message.tabId, {
@@ -243,6 +297,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return {
           ok: Boolean(fallback?.found),
           method: fallback?.found ? "html5" : "none",
+          verified: Boolean(fallback?.found && fallback?.verified),
+          partial: Boolean(fallback?.partial),
           captured: false,
           fallback,
           error: fallback?.found ? result?.error || message.captureError || null : result?.error || message.captureError || fallback?.error
@@ -256,6 +312,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return {
           ok: Boolean(fallback?.found),
           method: fallback?.found ? "html5" : "none",
+          verified: Boolean(fallback?.found && fallback?.verified),
+          partial: Boolean(fallback?.partial),
           captured: false,
           fallback,
           error: fallback?.found ? null : error.message

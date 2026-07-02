@@ -22,6 +22,7 @@ Website: https://site-rose-ten-88.vercel.app
 - Live popup refresh from Chrome tab events, with a short polling fallback
 - Built-in self checks for storage, tab access, script injection, tab capture, and page media access
 - Verified mute/unmute actions that read Chrome tab state back after updates
+- Apply-and-verify pass after volume/mute actions so failures show up instead of being silently treated as success
 - Vercel-ready Next.js website with a CSS-built extension preview
 
 ## Folder Structure

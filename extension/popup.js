@@ -38,11 +38,11 @@ function escapeHtml(value) {
 }
 
 async function chromeMessage(message) {
-  if (!hasChromeTabs()) return null;
+  if (!hasChromeTabs()) return { ok: false, error: "Chrome extension APIs are not available in this view." };
   try {
     return await chrome.runtime.sendMessage(message);
-  } catch {
-    return null;
+  } catch (error) {
+    return { ok: false, error: error.message || "Chrome runtime message failed." };
   }
 }
 
@@ -312,11 +312,19 @@ async function persistTabState() {
 function describeVolumeResult(tab, volume) {
   const result = tab.audioControl;
 
-  if (!result) return;
+  if (!result) {
+    tab.audioMethod = "mute-only";
+    lockStatus("Volume control failed: Chrome did not return a result.");
+    return;
+  }
 
   if (result.method === "tabCapture" || result.captured) {
     tab.audioMethod = "tabCapture";
-    lockStatus("Tab audio captured. Real boost is active.");
+    if (result.verified === false) {
+      lockStatus(`Tab capture failed verification: ${result.error || "gain did not match requested volume"}.`);
+    } else {
+      lockStatus("Tab audio captured and verified. Real boost is active.");
+    }
     return;
   }
 
@@ -330,9 +338,11 @@ function describeVolumeResult(tab, volume) {
     tab.audioMethod = "html5";
     const applied = result.fallback?.appliedNativeVolume;
     if (Number(volume) > 100) {
-      lockStatus(`HTML5 media volume changed to ${applied || 100}%. Boost above 100% needs tab capture.`);
+      lockStatus(`HTML5 fallback verified at ${applied || 100}%. Boost above 100% still needs tab capture.`);
+    } else if (result.verified === false) {
+      lockStatus(`HTML5 fallback did not verify: ${result.error || result.fallback?.error || "page media rejected the change"}.`);
     } else {
-      lockStatus("HTML5 media volume changed on this page.");
+      lockStatus("HTML5 media volume verified on this page.");
     }
     return;
   }
@@ -362,7 +372,9 @@ async function setTabVolume(tabId, volume) {
   tab.audioControl = await chromeMessage({ type: "VOLDECK_SET_VOLUME", tabId, volume, mediaStreamId, captureError });
 
   describeVolumeResult(tab, volume);
+  await verifyTabApplied(tabId);
   await persistTabState();
+  runSelfCheck({ quiet: true });
   render();
 }
 
@@ -383,6 +395,8 @@ async function toggleMute(tabId) {
   }
 
   await refreshSingleTab(tabId);
+  await verifyTabApplied(tabId);
+  runSelfCheck({ quiet: true });
   render();
 }
 
@@ -391,6 +405,11 @@ async function setTabMuted(tabId, muted) {
   if (!tab) return;
   const response = await chromeMessage({ type: "VOLDECK_SET_MUTED", tabId, muted });
   tab.muted = Boolean(response?.muted ?? muted);
+  if (!response?.ok || !response?.verified) {
+    tab.lastError = response?.error || "Mute state was not verified.";
+  } else {
+    tab.lastError = "";
+  }
   return response;
 }
 
@@ -408,6 +427,7 @@ async function soloTab(tabId) {
     lockStatus("Solo verified by Chrome.");
   }
   await refreshLiveTabs();
+  runSelfCheck({ quiet: true });
   render();
 }
 
@@ -484,6 +504,34 @@ async function refreshSingleTab(tabId) {
   });
 }
 
+async function verifyTabApplied(tabId) {
+  const response = await chromeMessage({ type: "VOLDECK_VERIFY_TAB_CONTROL", tabId });
+  if (!response?.ok) {
+    lockStatus(`Apply check failed: ${response?.error || "Chrome could not verify this tab."}`);
+    return response;
+  }
+
+  const tab = state.tabs.find((item) => item.id === tabId);
+  if (tab && response.tab) {
+    Object.assign(tab, {
+      ...response.tab,
+      domain: domainFromUrl(response.tab.url),
+      volume: tab.volume,
+      pinned: tab.pinned,
+      audioMethod: tab.audioMethod,
+      audioControl: tab.audioControl
+    });
+  }
+
+  if (!response.verified) {
+    const captureError = response.capture?.error;
+    const mediaError = response.media?.error;
+    lockStatus(`Apply check warning: ${captureError || mediaError || "not all control paths verified"}.`);
+  }
+
+  return response;
+}
+
 async function refreshLiveTabs() {
   if (state.refreshing) return;
   state.refreshing = true;
@@ -499,8 +547,12 @@ async function refreshLiveTabs() {
 function startLiveRefresh() {
   if (!hasChromeTabs()) return;
   setInterval(refreshLiveTabs, 2000);
+  setInterval(() => runSelfCheck({ quiet: true }), 8000);
   document.addEventListener("visibilitychange", () => {
-    if (!document.hidden) refreshLiveTabs();
+    if (!document.hidden) {
+      refreshLiveTabs();
+      runSelfCheck({ quiet: true });
+    }
   });
 
   const refresh = () => refreshLiveTabs();
@@ -510,9 +562,12 @@ function startLiveRefresh() {
   chrome.tabs.onUpdated?.addListener(refresh);
 }
 
-async function runSelfCheck() {
-  state.checks = [{ id: "running", label: "Running checks", ok: true, detail: "Checking Chrome APIs and active tab media..." }];
-  renderChecks();
+async function runSelfCheck(options = {}) {
+  const { quiet = false } = options;
+  if (!quiet) {
+    state.checks = [{ id: "running", label: "Running checks", ok: true, detail: "Checking Chrome APIs and active tab media..." }];
+    renderChecks();
+  }
 
   const response = await chromeMessage({ type: "VOLDECK_SELF_CHECK" });
   state.checks = Array.isArray(response?.checks)
@@ -520,7 +575,7 @@ async function runSelfCheck() {
     : [{ id: "self-check", label: "Self check runner", ok: false, detail: "Chrome did not return check results." }];
 
   if (response?.ok) {
-    lockStatus("Self check passed.");
+    if (!quiet) lockStatus("Self check passed.");
   } else {
     const failed = state.checks.filter((check) => !check.ok).length;
     lockStatus(`Self check found ${failed || 1} issue${failed === 1 ? "" : "s"}.`);
@@ -560,6 +615,7 @@ async function init() {
     const failed = results.filter((result) => !result?.ok || !result?.verified).length;
     lockStatus(failed ? `Mute-all check failed on ${failed} tab${failed === 1 ? "" : "s"}.` : "Mute all verified by Chrome.");
     await refreshLiveTabs();
+    runSelfCheck({ quiet: true });
     render();
   });
   $("#unmuteAll").addEventListener("click", async () => {
@@ -567,6 +623,7 @@ async function init() {
     const failed = results.filter((result) => !result?.ok || !result?.verified).length;
     lockStatus(failed ? `Unmute-all check failed on ${failed} tab${failed === 1 ? "" : "s"}.` : "Unmute all verified by Chrome.");
     await refreshLiveTabs();
+    runSelfCheck({ quiet: true });
     render();
   });
   $("#normalizeTabs").addEventListener("click", () => {

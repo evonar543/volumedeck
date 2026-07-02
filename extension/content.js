@@ -1,4 +1,7 @@
 (function () {
+  if (window.__volumedeckContentReady) return;
+  window.__volumedeckContentReady = true;
+
   let requestedVolume = 100;
   let mediaMuted = false;
 
@@ -8,16 +11,25 @@
 
   function applyMediaState() {
     const nativeVolume = Math.max(0, Math.min(requestedVolume / 100, 1));
-    mediaElements().forEach((media) => {
+    const elements = mediaElements();
+    elements.forEach((media) => {
       media.volume = nativeVolume;
       media.muted = mediaMuted || requestedVolume === 0;
       media.dataset.volumedeckVolume = String(requestedVolume);
     });
+
+    const verified = elements.every((media) => {
+      return media.volume === nativeVolume && media.muted === (mediaMuted || requestedVolume === 0);
+    });
+
     return {
-      found: mediaElements().length,
+      found: elements.length,
       requestedVolume,
       appliedNativeVolume: Math.round(nativeVolume * 100),
-      boostedBeyondNative: requestedVolume > 100
+      boostedBeyondNative: requestedVolume > 100,
+      verified,
+      partial: requestedVolume > 100,
+      error: elements.length ? null : "No HTML5 audio or video elements found on this page."
     };
   }
 

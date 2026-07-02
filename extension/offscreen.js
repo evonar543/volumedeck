@@ -71,14 +71,21 @@ async function setCaptureVolume(tabId, volume, mediaStreamId, hasExistingCapture
 
   capture.volume = nextVolume;
   capture.gain.gain.value = Math.max(0, nextVolume / 100);
-  return { captured: true, volume: nextVolume };
+  return {
+    captured: true,
+    volume: nextVolume,
+    appliedGain: capture.gain.gain.value,
+    verified: Math.abs(capture.gain.gain.value - Math.max(0, nextVolume / 100)) < 0.001
+  };
 }
 
 function getCaptureState(tabId) {
   const capture = captures.get(numericTabId(tabId));
   return {
     captured: Boolean(capture),
-    volume: capture?.volume || 100
+    volume: capture?.volume || 100,
+    appliedGain: capture?.gain?.gain?.value ?? 1,
+    verified: capture ? Math.abs((capture.gain?.gain?.value ?? 1) - Math.max(0, (capture.volume || 100) / 100)) < 0.001 : true
   };
 }
 
